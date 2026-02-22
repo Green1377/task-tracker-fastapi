@@ -1,40 +1,110 @@
-from typing import Generic, TypeVar, Type
+from typing import Generic, Type, TypeVar
 from uuid import UUID
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 T = TypeVar('T')
 
 
 class BaseRepository(Generic[T]):
+    """
+    Базовый репозиторий для CRUD операций.
+
+    Все методы реализованы и работают с любым ORM классом через Generic.
+    """
+
     def __init__(self, session: AsyncSession, model: Type[T]):
         self.session = session
         self.model = model
 
     async def create(self, **kwargs) -> T:
-        """Создать запись."""
-        pass
+        """
+        Создать новую запись в БД.
+
+        Args:
+            **kwargs: Поля модели для создания
+
+        Returns:
+            T: Созданный объект с заполненными полями (включая ID)
+        """
+        instance = self.model(**kwargs)
+        self.session.add(instance)
+        await self.session.commit()
+        await self.session.refresh(instance)
+        return instance
 
     async def get_by_id(self, id: UUID) -> T | None:
         """
-        Получить по ID.
+        Получить запись по первичному ключу.
 
-        📝 Примечание: session.get() автоматически работает с primary key модели,
-        независимо от его названия (id, book_id, user_id и т.д.)
+        📝 Примечание: session.get() автоматически находит primary key
+        модели, независимо от его имени (id, book_id, user_id и т.д.)
+
+        Args:
+            id: Значение первичного ключа
+
+        Returns:
+            T | None: Найденный объект или None если не существует
         """
-        pass
+        return await self.session.get(self.model, id)
 
     async def update(self, id: UUID, **kwargs) -> T | None:
-        """Обновить запись."""
-        pass
+        """
+        Обновить существующую запись.
+
+        Args:
+            id: ID записи для обновления
+            **kwargs: Поля для обновления (только переданные изменятся)
+
+        Returns:
+            T | None: Обновлённый объект или None если не найден
+        """
+        instance = await self.get_by_id(id)
+        if instance is None:
+            return None
+
+        # Обновляем только переданные атрибуты
+        for key, value in kwargs.items():
+            if hasattr(instance, key):
+                setattr(instance, key, value)
+
+        await self.session.commit()
+        await self.session.refresh(instance)
+        return instance
 
     async def delete(self, id: UUID) -> bool:
-        """Удалить запись."""
-        pass
+        """
+        Удалить запись из БД.
+
+        Args:
+            id: ID записи для удаления
+
+        Returns:
+            bool: True если удалено успешно, False если не найдено
+        """
+        instance = await self.get_by_id(id)
+        if instance is None:
+            return False
+
+        await self.session.delete(instance)
+        await self.session.commit()
+        return True
 
     async def get_all(
             self,
             limit: int = 100,
             offset: int = 0,
     ) -> list[T]:
-        """Получить все записи с пагинацией."""
-        pass
+        """
+        Получить все записи с пагинацией.
+
+        Args:
+            limit: Максимальное количество записей
+            offset: Количество записей для пропуска
+
+        Returns:
+            list[T]: Список объектов модели
+        """
+        stmt = select(self.model).limit(limit).offset(offset)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())

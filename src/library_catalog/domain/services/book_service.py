@@ -105,7 +105,7 @@ class BookService:
         # Обновить
         updated = await self.book_repo.update(
             book_id,
-            **book_data.dict(exclude_unset=True)
+            **book_data.model_dump(exclude_unset=True)  # ✅ Правильно для v2
         )
 
         return BookMapper.to_show_book(updated)

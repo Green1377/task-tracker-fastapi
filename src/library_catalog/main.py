@@ -11,7 +11,7 @@ from .core.config import settings
 from .core.database import dispose_engine
 from .core.exceptions import register_exception_handlers
 from .core.logging_config import setup_logging
-from .api.v1.routers import books, health
+from .api.v1.routers import books, health, auth
 
 
 # ========== LIFECYCLE EVENTS ==========
@@ -52,7 +52,7 @@ app = FastAPI(
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=settings.cors_origins or ["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -73,6 +73,9 @@ app.include_router(
     health.router,
     prefix=settings.api_v1_prefix,
 )
+app.include_router(
+    auth.router,
+    prefix=settings.api_v1_prefix,)
 
 
 # ========== ROOT ENDPOINT ==========

@@ -24,6 +24,7 @@ class BookRepository(BaseRepository[Book]):
     Расширяет базовый репозиторий специфичными методами поиска и фильтрации книг.
     """
 
+
     def __init__(self, session: AsyncSession):
         super().__init__(session, Book)
 

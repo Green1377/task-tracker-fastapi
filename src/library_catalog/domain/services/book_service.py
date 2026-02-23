@@ -53,7 +53,11 @@ class BookService:
         # 3. Обогащение данных из Open Library
         extra = await self._enrich_book_data(book_data)
 
-        # 4. Создание в БД
+        # 4. Защита от неожиданных типов
+        if extra is not None and not isinstance(extra, dict):
+            extra = None
+
+        # 5. Создание в БД (без коммита!)
         book = await self.book_repo.create(
             title=book_data.title,
             author=book_data.author,
@@ -65,7 +69,7 @@ class BookService:
             extra=extra,
         )
 
-        # 5. Маппинг в DTO
+        # 6. Маппинг в DTO
         return BookMapper.to_show_book(book)
 
     async def get_book(self, book_id: UUID) -> ShowBook:
@@ -102,10 +106,11 @@ class BookService:
         if book_data.pages is not None:
             self._validate_pages(book_data.pages)
 
-        # Обновить
+        # Обновить (без коммита!)
+        # ✅ ИСПРАВЛЕНО: .dict() → .model_dump()
         updated = await self.book_repo.update(
             book_id,
-            **book_data.model_dump(exclude_unset=True)  # ✅ Правильно для v2
+            **book_data.model_dump(exclude_unset=True)  # ← Pydantic v2
         )
 
         return BookMapper.to_show_book(updated)

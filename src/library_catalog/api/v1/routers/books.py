@@ -1,8 +1,9 @@
 from uuid import UUID
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from ...dependencies import BookServiceUowDep, UowDep  # ← Единый импорт
 from ..schemas.book import (
     BookCreate,
     BookUpdate,
@@ -10,10 +11,11 @@ from ..schemas.book import (
     BookFilters,
 )
 from ..schemas.common import PaginatedResponse, PaginationParams
-from ...dependencies import BookServiceDep
 
 router = APIRouter(prefix="/books", tags=["Books"])
 
+
+# ========== CREATE ==========
 
 @router.post(
     "/",
@@ -24,21 +26,20 @@ router = APIRouter(prefix="/books", tags=["Books"])
 )
 async def create_book(
         book_data: BookCreate,
-        service: BookServiceDep,
+        service: BookServiceUowDep,
+        uow: UowDep,
 ):
     """
     Создать новую книгу.
 
-    Автоматически обогащает данные из Open Library API:
-    - Обложка книги
-    - Темы/subjects
-    - Издатель
-    - Рейтинг
-
-    Если Open Library недоступен, книга все равно будет создана.
+    Использует явное управление транзакцией через Unit of Work.
     """
-    return await service.create_book(book_data)
+    book = await service.create_book(book_data)
+    await uow.commit()  # ← Явный коммит
+    return book
 
+
+# ========== READ (не требуют коммита) ==========
 
 @router.get(
     "/",
@@ -47,7 +48,7 @@ async def create_book(
     description="Получить список книг с фильтрацией и пагинацией",
 )
 async def get_books(
-        service: BookServiceDep,
+        service: BookServiceUowDep,  # ← Используем тот же деп для согласованности
         pagination: Annotated[PaginationParams, Depends()],
         title: str | None = Query(None, description="Поиск по названию"),
         author: str | None = Query(None, description="Поиск по автору"),
@@ -58,16 +59,7 @@ async def get_books(
     """
     Получить список книг с фильтрацией.
 
-    Поддерживаемые фильтры:
-    - title: частичное совпадение (регистронезависимо)
-    - author: частичное совпадение (регистронезависимо)
-    - genre: точное совпадение
-    - year: точное совпадение
-    - available: True/False
-
-    Пагинация:
-    - page: номер страницы (начиная с 1)
-    - page_size: размер страницы (1-100, по умолчанию 20)
+    Read-only операция — коммит не требуется.
     """
     books, total = await service.search_books(
         title=title,
@@ -90,19 +82,26 @@ async def get_books(
 )
 async def get_book(
         book_id: UUID,
-        service: BookServiceDep,
+        service: BookServiceUowDep,  # ← Единый деп
 ):
     """
     Получить книгу по ID.
 
-    Returns:
-        ShowBook: Полная информация о книге
-
     Raises:
         404: Книга не найдена
     """
-    return await service.get_book(book_id)
+    book = await service.get_book(book_id)
 
+    if book is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Книга не найдена"
+        )
+
+    return book
+
+
+# ========== UPDATE ==========
 
 @router.patch(
     "/{book_id}",
@@ -113,23 +112,27 @@ async def get_book(
 async def update_book(
         book_id: UUID,
         book_data: BookUpdate,
-        service: BookServiceDep,
+        service: BookServiceUowDep,
+        uow: UowDep,  # ← Добавить UoW для явного коммита
 ):
     """
     Обновить книгу.
 
     Передаются только те поля, которые нужно изменить.
-    Остальные поля остаются без изменений.
-
-    Returns:
-        ShowBook: Обновленная книга
-
-    Raises:
-        404: Книга не найдена
-        400: Невалидные данные
     """
-    return await service.update_book(book_id, book_data)
+    book = await service.update_book(book_id, book_data)
 
+    if book is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Книга не найдена"
+        )
+
+    await uow.commit()  # ← Явный коммит
+    return book
+
+
+# ========== DELETE ==========
 
 @router.delete(
     "/{book_id}",
@@ -139,7 +142,7 @@ async def update_book(
 )
 async def delete_book(
         book_id: UUID,
-        service: BookServiceDep,
+        uow: UowDep,  # ← Используем напрямую для явного коммита
 ):
     """
     Удалить книгу.
@@ -147,4 +150,13 @@ async def delete_book(
     Raises:
         404: Книга не найдена
     """
-    await service.delete_book(book_id)
+    success = await uow.books.delete(book_id)
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Книга не найдена"
+        )
+
+    await uow.commit()  # ← Явный коммит
+    return None

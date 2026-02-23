@@ -10,7 +10,6 @@ class BaseRepository(Generic[T]):
     """
     Базовый репозиторий для CRUD операций.
 
-    Все методы реализованы и работают с любым ORM классом через Generic.
     """
 
     def __init__(self, session: AsyncSession, model: Type[T]):
@@ -21,16 +20,22 @@ class BaseRepository(Generic[T]):
         """
         Создать новую запись в БД.
 
+
         Args:
             **kwargs: Поля модели для создания
 
         Returns:
-            T: Созданный объект с заполненными полями (включая ID)
+            T: Созданный объект с заполненными полями (включая сгенерированный ID)
         """
         instance = self.model(**kwargs)
         self.session.add(instance)
-        await self.session.commit()
+
+        # Сбросить в БД для получения сгенерированных значений (ID, timestamps)
+        await self.session.flush()
+
+        # Обновить объект с данными из БД
         await self.session.refresh(instance)
+
         return instance
 
     async def get_by_id(self, id: UUID) -> T | None:
@@ -52,6 +57,7 @@ class BaseRepository(Generic[T]):
         """
         Обновить существующую запись.
 
+
         Args:
             id: ID записи для обновления
             **kwargs: Поля для обновления (только переданные изменятся)
@@ -68,13 +74,18 @@ class BaseRepository(Generic[T]):
             if hasattr(instance, key):
                 setattr(instance, key, value)
 
-        await self.session.commit()
+        # Сбросить изменения в БД
+        await self.session.flush()
+
+        # Обновить объект с данными из БД
         await self.session.refresh(instance)
+
         return instance
 
     async def delete(self, id: UUID) -> bool:
         """
         Удалить запись из БД.
+
 
         Args:
             id: ID записи для удаления
@@ -87,7 +98,10 @@ class BaseRepository(Generic[T]):
             return False
 
         await self.session.delete(instance)
-        await self.session.commit()
+
+        # Сбросить изменения в БД
+        await self.session.flush()
+
         return True
 
     async def get_all(
@@ -97,6 +111,7 @@ class BaseRepository(Generic[T]):
     ) -> list[T]:
         """
         Получить все записи с пагинацией.
+
 
         Args:
             limit: Максимальное количество записей
@@ -108,3 +123,12 @@ class BaseRepository(Generic[T]):
         stmt = select(self.model).limit(limit).offset(offset)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def flush(self) -> None:
+        """
+        Сбросить все изменения в БД без коммита.
+
+        Полезно для получения сгенерированных значений (ID, timestamps)
+        перед фиксацией транзакции.
+        """
+        await self.session.flush()

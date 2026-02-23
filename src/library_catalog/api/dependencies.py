@@ -13,6 +13,7 @@ from ..core.config import settings
 from ..core.database import get_db
 from ..data.repositories.book_repository import BookRepository
 from ..data.uow import UnitOfWork
+from ..core.security import *
 from ..domain.services.book_service import BookService
 from ..external.openlibrary.client import OpenLibraryClient
 
@@ -91,4 +92,5 @@ BookServiceDep = Annotated[BookService, Depends(get_book_service)]
 # Для операций записи (POST, PATCH, DELETE)
 BookServiceUowDep = Annotated[BookService, Depends(get_book_service_uow)]
 UowDep = Annotated[UnitOfWork, Depends(get_uow)]
+CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db)]

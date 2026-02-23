@@ -1,9 +1,12 @@
+# library_catalog/src/library_catalog/api/v1/routers/books.py
+
 from uuid import UUID
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from ...dependencies import BookServiceUowDep, UowDep  # ← Единый импорт
+# ДОБАВИТЬ ИМПОРТ ТЕКУЩЕГО ПОЛЬЗОВАТЕЛЯ:
+from ...dependencies import BookServiceUowDep, UowDep, CurrentUserDep  # ← CurrentUserDep добавлен
 from ..schemas.book import (
     BookCreate,
     BookUpdate,
@@ -15,7 +18,7 @@ from ..schemas.common import PaginatedResponse, PaginationParams
 router = APIRouter(prefix="/books", tags=["Books"])
 
 
-# ========== CREATE ==========
+# ========== CREATE (ЗАЩИЩЁН) ==========
 
 @router.post(
     "/",
@@ -28,18 +31,19 @@ async def create_book(
         book_data: BookCreate,
         service: BookServiceUowDep,
         uow: UowDep,
+        current_user: CurrentUserDep,  # ← ЗАЩИТА: только аутентифицированные пользователи
 ):
     """
     Создать новую книгу.
 
-    Использует явное управление транзакцией через Unit of Work.
+    🔒 Требуется аутентификация.
     """
     book = await service.create_book(book_data)
-    await uow.commit()  # ← Явный коммит
+    await uow.commit()
     return book
 
 
-# ========== READ (не требуют коммита) ==========
+# ========== READ (ПУБЛИЧНЫЕ — без защиты) ==========
 
 @router.get(
     "/",
@@ -48,7 +52,7 @@ async def create_book(
     description="Получить список книг с фильтрацией и пагинацией",
 )
 async def get_books(
-        service: BookServiceUowDep,  # ← Используем тот же деп для согласованности
+        service: BookServiceUowDep,
         pagination: Annotated[PaginationParams, Depends()],
         title: str | None = Query(None, description="Поиск по названию"),
         author: str | None = Query(None, description="Поиск по автору"),
@@ -59,7 +63,7 @@ async def get_books(
     """
     Получить список книг с фильтрацией.
 
-    Read-only операция — коммит не требуется.
+    🌐 Публичный эндпоинт — доступен всем без аутентификации.
     """
     books, total = await service.search_books(
         title=title,
@@ -82,10 +86,12 @@ async def get_books(
 )
 async def get_book(
         book_id: UUID,
-        service: BookServiceUowDep,  # ← Единый деп
+        service: BookServiceUowDep,
 ):
     """
     Получить книгу по ID.
+
+    🌐 Публичный эндпоинт — доступен всем без аутентификации.
 
     Raises:
         404: Книга не найдена
@@ -101,7 +107,7 @@ async def get_book(
     return book
 
 
-# ========== UPDATE ==========
+# ========== UPDATE (ЗАЩИЩЁН) ==========
 
 @router.patch(
     "/{book_id}",
@@ -113,10 +119,13 @@ async def update_book(
         book_id: UUID,
         book_data: BookUpdate,
         service: BookServiceUowDep,
-        uow: UowDep,  # ← Добавить UoW для явного коммита
+        uow: UowDep,
+        current_user: CurrentUserDep,  # ← ЗАЩИТА
 ):
     """
     Обновить книгу.
+
+    🔒 Требуется аутентификация.
 
     Передаются только те поля, которые нужно изменить.
     """
@@ -128,11 +137,11 @@ async def update_book(
             detail="Книга не найдена"
         )
 
-    await uow.commit()  # ← Явный коммит
+    await uow.commit()
     return book
 
 
-# ========== DELETE ==========
+# ========== DELETE (ЗАЩИЩЁН) ==========
 
 @router.delete(
     "/{book_id}",
@@ -142,10 +151,13 @@ async def update_book(
 )
 async def delete_book(
         book_id: UUID,
-        uow: UowDep,  # ← Используем напрямую для явного коммита
+        uow: UowDep,
+        current_user: CurrentUserDep,  # ← ЗАЩИТА
 ):
     """
     Удалить книгу.
+
+    🔒 Требуется аутентификация.
 
     Raises:
         404: Книга не найдена
@@ -158,5 +170,5 @@ async def delete_book(
             detail="Книга не найдена"
         )
 
-    await uow.commit()  # ← Явный коммит
+    await uow.commit()
     return None

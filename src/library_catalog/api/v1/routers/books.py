@@ -3,7 +3,9 @@
 from uuid import UUID
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
+
+from src.library_catalog.core.rate_limiter import limiter
 
 # ДОБАВИТЬ ИМПОРТ ТЕКУЩЕГО ПОЛЬЗОВАТЕЛЯ:
 from ...dependencies import BookServiceUowDep, UowDep, CurrentUserDep  # ← CurrentUserDep добавлен
@@ -27,7 +29,9 @@ router = APIRouter(prefix="/books", tags=["Books"])
     summary="Создать книгу",
     description="Создать новую книгу в каталоге с автоматическим обогащением из Open Library",
 )
+@limiter.limit("3/minute")
 async def create_book(
+        request: Request,
         book_data: BookCreate,
         service: BookServiceUowDep,
         uow: UowDep,

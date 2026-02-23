@@ -11,8 +11,10 @@
 from datetime import timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+
+from src.library_catalog.core.rate_limiter import limiter
 
 from ...dependencies import DbSessionDep
 from src.library_catalog.core.config import settings
@@ -50,7 +52,9 @@ security = HTTPBasic()
     ⏱ Токен действителен: 30 минут (по умолчанию)
     """
 )
+@limiter.limit("5/minute")
 async def login(
+        request: Request,
         credentials: HTTPBasicCredentials = Depends(security),
         db: DbSessionDep = None,  # Можно добавить проверку в БД
 ):

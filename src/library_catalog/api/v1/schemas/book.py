@@ -67,7 +67,7 @@ class BookUpdate(BaseModel):
 
 
 class ShowBook(BookBase):
-    """Схема для отображения книги (response)."""
+    """Схема для отображения книги в API."""
     book_id: UUID
     available: bool
     isbn: str | None
@@ -75,15 +75,6 @@ class ShowBook(BookBase):
     extra: dict | None
     created_at: datetime
     updated_at: datetime
-
-    model_config = {
-        "json_schema_extra": {
-            "examples": [{
-                "title": "Refactoring",
-                "available": False
-            }]
-        }
-    }
 
     model_config = {
         "from_attributes": True,  # Для ORM моделей
@@ -103,13 +94,12 @@ class ShowBook(BookBase):
                         "cover_url": "https://covers.openlibrary.org/b/id/123-L.jpg",
                         "subjects": ["Computer Science", "Software Engineering"]
                     },
-                    "created_at": "2024-01-01T12:00:00",
-                    "updated_at": "2024-01-01T12:00:00"
+                    "created_at": "2024-01-01T12:00:00Z",
+                    "updated_at": "2024-01-01T12:00:00Z"
                 }
             ]
         }
     }
-
 
 class BookFilters(BaseModel):
     """Фильтры для поиска книг."""

@@ -10,8 +10,8 @@ class OpenLibrarySearchDoc(BaseModel):
     author_name: list[str] | None = Field(None)
     cover_i: int | None = Field(None)
     subject: list[str] | None = None
-    description: str | None = None # ✅
-    first_sentence: str | None = None # ✅
+    description: str | None = None
+    first_sentence: str | None = None
     publisher: list[str] | None = None
     language: list[str] | None = None
     ratings_average: float | None = Field(None)
@@ -23,8 +23,8 @@ class OpenLibrarySearchDoc(BaseModel):
 class OpenLibrarySearchResponse(BaseModel):
     """Ответ от /search.json"""
 
-    num_found: int = Field(..., alias="numFound")  # ✅ alias нужен только здесь
+    num_found: int = Field(..., alias="numFound")
     docs: list[OpenLibrarySearchDoc]
     # Проблема: Если в ответе появятся новые поля (например, publish_year),
     # Pydantic по умолчанию проигнорирует их без предупреждения, но это может быть нежелательно для отладки.
-    model_config = ConfigDict(populate_by_name=True, extra="ignore") # ✅
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")

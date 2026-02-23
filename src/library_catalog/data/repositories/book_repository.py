@@ -1,149 +1,156 @@
+# src/library_catalog/data/repositories/book_repository.py
 """
-Репозиторий для работы с книгами в каталоге библиотеки.
-
-Предоставляет расширенные методы поиска с фильтрацией по основным атрибутам книги,
-поиск по уникальному ISBN и подсчёт результатов. Все операции выполняются асинхронно.
+Репозиторий для работы с книгами.
+Реализует специфичные для книг операции поверх базового CRUD.
 """
 
-from typing import Optional, Type, TypeVar
-
-from sqlalchemy import Select, and_, func, select
+from typing import Optional
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql.expression import Select
+from sqlalchemy.sql import Select
 
-from ..repositories.base_repository import BaseRepository
+from .base_repository import BaseRepository
 from ..models.book import Book
-
-T = TypeVar("T")
 
 
 class BookRepository(BaseRepository[Book]):
-    """
-    Репозиторий для управления сущностями книг.
-
-    Расширяет базовый репозиторий специфичными методами поиска и фильтрации книг.
-    """
+    """Репозиторий для работы с книгами."""
 
     def __init__(self, session: AsyncSession):
-        super().__init__(session, Book)
+        super().__init__(session=session, model=Book)
 
-    async def find_by_filters(
-            self,
-            title: str | None = None,
-            author: str | None = None,
-            genre: str | None = None,
-            year: int | None = None,
-            available: bool | None = None,
-            limit: int = 20,
-            offset: int = 0,
-    ) -> list[Book]:
+    # ========== ЗАЩИТА ОТ LIKE INJECTION ==========
+
+    def _escape_like_pattern(self, pattern: str) -> str:
         """
-        Поиск книг с применением фильтров.
+        Экранировать специальные символы LIKE (% и _).
 
-        Args:
-            title: Подстрока для поиска в названии (case-insensitive)
-            author: Подстрока для поиска в авторе (case-insensitive)
-            genre: Точный матч жанра (case-insensitive)
-            year: Точный год издания
-            available: Фильтр по доступности (True/False)
-            limit: Максимальное количество результатов (по умолчанию 20)
-            offset: Смещение для пагинации (по умолчанию 0)
+        Защищает от инъекций через фильтры поиска.
+        Пример уязвимости:
+            ?title=%' OR '1'='1  → найдёт ВСЕ книги
 
-        Returns:
-            Список книг, соответствующих фильтрам
+        После экранирования:
+            ?title=%' OR '1'='1 → ищет буквально "%' OR '1'='1"
         """
-        query = select(Book)
+        return (
+            pattern
+            .replace("\\", "\\\\")  # Сначала экранируем обратный слеш
+            .replace("%", r"\%")    # Экранируем %
+            .replace("_", r"\_")    # Экранируем _
+        )
 
-        # Динамическое добавление фильтров (игнорируем None)
+    # ========== ВЫНЕСЕНИЕ ОБЩЕЙ ЛОГИКИ ФИЛЬТРОВ (DRY) ==========
+
+    def _apply_filters(
+        self,
+        query: Select,
+        title: str | None = None,
+        author: str | None = None,
+        genre: str | None = None,
+        year: int | None = None,
+        available: bool | None = None,
+    ) -> Select:
+        """
+        Применить фильтры к SQL запросу.
+
+        Используется в обоих методах (find_by_filters и count_by_filters)
+        для предотвращения дублирования логики.
+
+        Важно: Все текстовые фильтры экранируются для защиты от инъекций.
+        """
         if title:
-            query = query.where(Book.title.ilike(f"%{title}%"))
+            escaped_title = self._escape_like_pattern(title)
+            query = query.where(Book.title.ilike(f"%{escaped_title}%"))
+
         if author:
-            query = query.where(Book.author.ilike(f"%{author}%"))
+            escaped_author = self._escape_like_pattern(author)
+            query = query.where(Book.author.ilike(f"%{escaped_author}%"))
+
         if genre:
-            query = query.where(Book.genre.ilike(f"%{genre}%"))
+            escaped_genre = self._escape_like_pattern(genre)
+            query = query.where(Book.genre.ilike(f"%{escaped_genre}%"))
+
         if year is not None:
             query = query.where(Book.year == year)
+
         if available is not None:
             query = query.where(Book.available == available)
 
-        # Применяем пагинацию
+        return query
+
+    # ========== ПОИСК С ФИЛЬТРАМИ ==========
+
+    async def find_by_filters(
+        self,
+        title: str | None = None,
+        author: str | None = None,
+        genre: str | None = None,
+        year: int | None = None,
+        available: bool | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[Book]:
+        """
+        Поиск книг с применением фильтров и пагинацией.
+
+        Примеры:
+            # Поиск книг Роберта Мартина
+            books = await repo.find_by_filters(author="Martin")
+
+            # Поиск доступных книг по программированию
+            books = await repo.find_by_filters(
+                genre="Programming",
+                available=True
+            )
+
+        Args:
+            title: Подстрока в названии (без учёта регистра)
+            author: Подстрока в авторе (без учёта регистра)
+            genre: Подстрока в жанре (без учёта регистра)
+            year: Точный год издания
+            available: Фильтр по доступности
+            limit: Максимум записей на страницу
+            offset: Смещение для пагинации
+
+        Returns:
+            list[Book]: Список найденных книг
+        """
+        query = select(Book)
+        query = self._apply_filters(query, title, author, genre, year, available)
         query = query.limit(limit).offset(offset)
 
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
-    async def find_by_isbn(self, isbn: str) -> Book | None:
+    # ========== ПОДСЧЁТ С ФИЛЬТРАМИ ==========
+
+    async def count_by_filters(
+        self,
+        title: str | None = None,
+        author: str | None = None,
+        genre: str | None = None,
+        year: int | None = None,
+        available: bool | None = None,
+    ) -> int:
         """
-        Найти книгу по уникальному ISBN.
+        Подсчитать количество книг по фильтрам.
 
-        Args:
-            isbn: ISBN книги (до 20 символов)
+        Использует тот же метод _apply_filters для избежания дублирования.
+        """
+        query = select(func.count(Book.book_id))
+        query = self._apply_filters(query, title, author, genre, year, available)
 
-        Returns:
-            Найденная книга или None, если не найдена
+        result = await self.session.execute(query)
+        return result.scalar_one()
+
+    # ========== ПОИСК ПО ISBN ==========
+
+    async def find_by_isbn(self, isbn: str) -> Optional[Book]:
+        """
+        Найти книгу по точному совпадению ISBN.
+
+        ISBN хранится в нормализованном виде (без дефисов и пробелов).
         """
         query = select(Book).where(Book.isbn == isbn)
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
-
-    async def count_by_filters(
-            self,
-            title: str | None = None,
-            author: str | None = None,
-            genre: str | None = None,
-            year: int | None = None,
-            available: bool | None = None,
-    ) -> int:
-        """
-        Подсчитать количество книг, соответствующих фильтрам.
-
-        Args:
-            title: Подстрока для поиска в названии (case-insensitive)
-            author: Подстрока для поиска в авторе (case-insensitive)
-            genre: Точный матч жанра (case-insensitive)
-            year: Точный год издания
-            available: Фильтр по доступности (True/False)
-
-        Returns:
-            Количество книг, удовлетворяющих условиям фильтрации
-        """
-        query = select(func.count(Book.book_id))
-
-        # Те же фильтры, что и в find_by_filters
-        if title:
-            query = query.where(Book.title.ilike(f"%{title}%"))
-        if author:
-            query = query.where(Book.author.ilike(f"%{author}%"))
-        if genre:
-            query = query.where(Book.genre.ilike(f"%{genre}%"))
-        if year is not None:
-            query = query.where(Book.year == year)
-        if available is not None:
-            query = query.where(Book.available == available)
-
-        result = await self.session.execute(query)
-        return result.scalar_one() or 0
-
-    async def find_available_books(
-            self,
-            limit: int = 20,
-            offset: int = 0,
-    ) -> list[Book]:
-        """
-        Получить список доступных для выдачи книг.
-
-        Args:
-            limit: Максимальное количество результатов
-            offset: Смещение для пагинации
-
-        Returns:
-            Список доступных книг
-        """
-        query = (
-            select(Book)
-            .where(Book.available == True)
-            .limit(limit)
-            .offset(offset)
-        )
-        result = await self.session.execute(query)
-        return list(result.scalars().all())

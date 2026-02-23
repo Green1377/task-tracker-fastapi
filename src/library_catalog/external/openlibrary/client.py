@@ -123,7 +123,11 @@ class OpenLibraryClient(BaseApiClient):
 
         # Publisher
         if publisher := doc.get("publisher"):
-            result["publisher"] = publisher[0] if publisher else None
+            # Безопасное извлечение из списка
+            if isinstance(publisher, list) and publisher:
+                result["publisher"] = publisher[0]
+            elif isinstance(publisher, str):
+                result["publisher"] = publisher
 
         # Language
         if language := doc.get("language"):

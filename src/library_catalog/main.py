@@ -4,14 +4,24 @@ Library Catalog API - Точка входа приложения.
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse
 
 from .core.config import settings
 from .core.database import dispose_engine
 from .core.exceptions import register_exception_handlers
 from .core.logging_config import setup_logging
-from .api.v1.routers import books, health
+from .core.rate_limiter import limiter
+from .api.v1.routers import books, health, auth
+
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
+
+
 
 
 # ========== LIFECYCLE EVENTS ==========
@@ -47,12 +57,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Добавить лимитер в состояние приложения
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+# Обработчик ошибок превышения лимита
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Too many requests. Please try again later."},
+        )
+
 # ========== MIDDLEWARE ==========
 
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=settings.cors_origins or ["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -73,6 +95,9 @@ app.include_router(
     health.router,
     prefix=settings.api_v1_prefix,
 )
+app.include_router(
+    auth.router,
+    prefix=settings.api_v1_prefix,)
 
 
 # ========== ROOT ENDPOINT ==========

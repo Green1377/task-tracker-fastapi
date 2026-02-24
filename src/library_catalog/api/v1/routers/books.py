@@ -1,8 +1,14 @@
+# library_catalog/src/library_catalog/api/v1/routers/books.py
+
 from uuid import UUID
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 
+from src.library_catalog.core.rate_limiter import limiter
+
+# ДОБАВИТЬ ИМПОРТ ТЕКУЩЕГО ПОЛЬЗОВАТЕЛЯ:
+from ...dependencies import BookServiceUowDep, UowDep, CurrentUserDep  # ← CurrentUserDep добавлен
 from ..schemas.book import (
     BookCreate,
     BookUpdate,
@@ -10,10 +16,11 @@ from ..schemas.book import (
     BookFilters,
 )
 from ..schemas.common import PaginatedResponse, PaginationParams
-from ...dependencies import BookServiceDep
 
 router = APIRouter(prefix="/books", tags=["Books"])
 
+
+# ========== CREATE (ЗАЩИЩЁН) ==========
 
 @router.post(
     "/",
@@ -22,23 +29,25 @@ router = APIRouter(prefix="/books", tags=["Books"])
     summary="Создать книгу",
     description="Создать новую книгу в каталоге с автоматическим обогащением из Open Library",
 )
+@limiter.limit("3/minute")
 async def create_book(
+        request: Request,
         book_data: BookCreate,
-        service: BookServiceDep,
+        service: BookServiceUowDep,
+        uow: UowDep,
+        current_user: CurrentUserDep,  # ← ЗАЩИТА: только аутентифицированные пользователи
 ):
     """
     Создать новую книгу.
 
-    Автоматически обогащает данные из Open Library API:
-    - Обложка книги
-    - Темы/subjects
-    - Издатель
-    - Рейтинг
-
-    Если Open Library недоступен, книга все равно будет создана.
+    🔒 Требуется аутентификация.
     """
-    return await service.create_book(book_data)
+    book = await service.create_book(book_data)
+    await uow.commit()
+    return book
 
+
+# ========== READ (ПУБЛИЧНЫЕ — без защиты) ==========
 
 @router.get(
     "/",
@@ -47,7 +56,7 @@ async def create_book(
     description="Получить список книг с фильтрацией и пагинацией",
 )
 async def get_books(
-        service: BookServiceDep,
+        service: BookServiceUowDep,
         pagination: Annotated[PaginationParams, Depends()],
         title: str | None = Query(None, description="Поиск по названию"),
         author: str | None = Query(None, description="Поиск по автору"),
@@ -58,16 +67,7 @@ async def get_books(
     """
     Получить список книг с фильтрацией.
 
-    Поддерживаемые фильтры:
-    - title: частичное совпадение (регистронезависимо)
-    - author: частичное совпадение (регистронезависимо)
-    - genre: точное совпадение
-    - year: точное совпадение
-    - available: True/False
-
-    Пагинация:
-    - page: номер страницы (начиная с 1)
-    - page_size: размер страницы (1-100, по умолчанию 20)
+    🌐 Публичный эндпоинт — доступен всем без аутентификации.
     """
     books, total = await service.search_books(
         title=title,
@@ -90,19 +90,28 @@ async def get_books(
 )
 async def get_book(
         book_id: UUID,
-        service: BookServiceDep,
+        service: BookServiceUowDep,
 ):
     """
     Получить книгу по ID.
 
-    Returns:
-        ShowBook: Полная информация о книге
+    🌐 Публичный эндпоинт — доступен всем без аутентификации.
 
     Raises:
         404: Книга не найдена
     """
-    return await service.get_book(book_id)
+    book = await service.get_book(book_id)
 
+    if book is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Книга не найдена"
+        )
+
+    return book
+
+
+# ========== UPDATE (ЗАЩИЩЁН) ==========
 
 @router.patch(
     "/{book_id}",
@@ -113,23 +122,30 @@ async def get_book(
 async def update_book(
         book_id: UUID,
         book_data: BookUpdate,
-        service: BookServiceDep,
+        service: BookServiceUowDep,
+        uow: UowDep,
+        current_user: CurrentUserDep,  # ← ЗАЩИТА
 ):
     """
     Обновить книгу.
 
+    🔒 Требуется аутентификация.
+
     Передаются только те поля, которые нужно изменить.
-    Остальные поля остаются без изменений.
-
-    Returns:
-        ShowBook: Обновленная книга
-
-    Raises:
-        404: Книга не найдена
-        400: Невалидные данные
     """
-    return await service.update_book(book_id, book_data)
+    book = await service.update_book(book_id, book_data)
 
+    if book is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Книга не найдена"
+        )
+
+    await uow.commit()
+    return book
+
+
+# ========== DELETE (ЗАЩИЩЁН) ==========
 
 @router.delete(
     "/{book_id}",
@@ -139,12 +155,24 @@ async def update_book(
 )
 async def delete_book(
         book_id: UUID,
-        service: BookServiceDep,
+        uow: UowDep,
+        current_user: CurrentUserDep,  # ← ЗАЩИТА
 ):
     """
     Удалить книгу.
 
+    🔒 Требуется аутентификация.
+
     Raises:
         404: Книга не найдена
     """
-    await service.delete_book(book_id)
+    success = await uow.books.delete(book_id)
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Книга не найдена"
+        )
+
+    await uow.commit()
+    return None

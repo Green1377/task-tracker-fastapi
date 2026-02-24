@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-import http
+import httpx
 import logging
 import time
 import asyncio
